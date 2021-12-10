@@ -3,6 +3,8 @@ from argparse import ArgumentParser
 from mmdet.apis import init_detector, show_result_pyplot
 from mmdet.apis import inference_detector_huge_image
 
+import mmcv
+
 
 def main():
     parser = ArgumentParser()
@@ -24,7 +26,9 @@ def main():
     result = inference_detector_huge_image(
         model, args.img, args.split, nms_cfg)
     # show the results
-    show_result_pyplot(model, args.img, result, score_thr=args.score_thr)
+    # show_result_pyplot(model, args.img, result, score_thr=args.score_thr)
+    img = model.show_result(args.img, result, score_thr=args.score_thr, show=False)
+    mmcv.imwrite(img, 'demo/' + 'dota_demo_result.png')
 
 
 if __name__ == '__main__':
