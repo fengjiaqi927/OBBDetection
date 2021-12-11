@@ -1,6 +1,6 @@
 _base_ = [
     '../_base_/datasets/dota_tzb.py',
-    '../_base_/schedules/schedule_1x.py',
+    '../_base_/schedules/schedule_3x.py',
     '../../_base_/default_runtime.py'
 ]
 
@@ -123,11 +123,11 @@ test_cfg = dict(
 # Custom
 checkpoint_config = dict(interval=1)
 log_config = dict(interval=50)
-optimizer = dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=0.0001)
+optimizer = dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001)
 lr_config = dict(
     policy='step',
     warmup='linear',
     warmup_iters=500,
     warmup_ratio=0.001,
-    step=[8, 11])
-total_epochs = 12
+    step=[24, 33])
+total_epochs = 36
