@@ -24,7 +24,6 @@ except ImportError:
 @PIPELINES.register_module()
 class Resize(object):
     """Resize images & bbox & mask.
-
     This transform resizes the input image to some scale. Bboxes and masks are
     then resized with the same scale factor. If the input dict contains the key
     "scale", then the scale in the input dict is used, otherwise the specified
@@ -32,30 +31,41 @@ class Resize(object):
     "scale_factor" (if MultiScaleFlipAug does not give img_scale but
     scale_factor), the actual scale will be computed by image shape and
     scale_factor.
-
     `img_scale` can either be a tuple (single-scale) or a list of tuple
     (multi-scale). There are 3 multiscale modes:
-
-    - ``ratio_range is not None``: randomly sample a ratio from the ratio range
-      and multiply it with the image scale.
-    - ``ratio_range is None`` and ``multiscale_mode == "range"``: randomly
+    - ``ratio_range is not None``: randomly sample a ratio from the ratio \
+      range and multiply it with the image scale.
+    - ``ratio_range is None`` and ``multiscale_mode == "range"``: randomly \
       sample a scale from the multiscale range.
-    - ``ratio_range is None`` and ``multiscale_mode == "value"``: randomly
+    - ``ratio_range is None`` and ``multiscale_mode == "value"``: randomly \
       sample a scale from multiple scales.
-
     Args:
         img_scale (tuple or list[tuple]): Images scales for resizing.
         multiscale_mode (str): Either "range" or "value".
         ratio_range (tuple[float]): (min_ratio, max_ratio)
         keep_ratio (bool): Whether to keep the aspect ratio when resizing the
             image.
+        bbox_clip_border (bool, optional): Whether clip the objects outside
+            the border of the image. Defaults to True.
+        backend (str): Image resize backend, choices are 'cv2' and 'pillow'.
+            These two backends generates slightly different results. Defaults
+            to 'cv2'.
+        override (bool, optional): Whether to override `scale` and
+            `scale_factor` so as to call resize twice. Default False. If True,
+            after the first resizing, the existed `scale` and `scale_factor`
+            will be ignored so the second resizing can be allowed.
+            This option is a work-around for multiple times of resize in DETR.
+            Defaults to False.
     """
 
     def __init__(self,
                  img_scale=None,
                  multiscale_mode='range',
                  ratio_range=None,
-                 keep_ratio=True):
+                 keep_ratio=True,
+                 bbox_clip_border=True,
+                 backend='cv2',
+                 override=False):
         if img_scale is None:
             self.img_scale = None
         else:
@@ -72,20 +82,22 @@ class Resize(object):
             # mode 2: given multiple scales or a range of scales
             assert multiscale_mode in ['value', 'range']
 
+        self.backend = backend
         self.multiscale_mode = multiscale_mode
         self.ratio_range = ratio_range
         self.keep_ratio = keep_ratio
+        # TODO: refactor the override option in Resize
+        self.override = override
+        self.bbox_clip_border = bbox_clip_border
 
     @staticmethod
     def random_select(img_scales):
         """Randomly select an img_scale from given candidates.
-
         Args:
             img_scales (list[tuple]): Images scales for selection.
-
         Returns:
-            (tuple, int): Returns a tuple ``(img_scale, scale_dix)``,
-                where ``img_scale`` is the selected image scale and
+            (tuple, int): Returns a tuple ``(img_scale, scale_dix)``, \
+                where ``img_scale`` is the selected image scale and \
                 ``scale_idx`` is the selected index in the given candidates.
         """
 
@@ -97,15 +109,13 @@ class Resize(object):
     @staticmethod
     def random_sample(img_scales):
         """Randomly sample an img_scale when ``multiscale_mode=='range'``.
-
         Args:
             img_scales (list[tuple]): Images scale range for sampling.
                 There must be two tuples in img_scales, which specify the lower
-                and uper bound of image scales.
-
+                and upper bound of image scales.
         Returns:
-            (tuple, None): Returns a tuple ``(img_scale, None)``, where
-                ``img_scale`` is sampled scale and None is just a placeholder
+            (tuple, None): Returns a tuple ``(img_scale, None)``, where \
+                ``img_scale`` is sampled scale and None is just a placeholder \
                 to be consistent with :func:`random_select`.
         """
 
@@ -124,20 +134,17 @@ class Resize(object):
     @staticmethod
     def random_sample_ratio(img_scale, ratio_range):
         """Randomly sample an img_scale when ``ratio_range`` is specified.
-
         A ratio will be randomly sampled from the range specified by
         ``ratio_range``. Then it would be multiplied with ``img_scale`` to
         generate sampled scale.
-
         Args:
             img_scale (tuple): Images scale base to multiply with ratio.
             ratio_range (tuple[float]): The minimum and maximum ratio to scale
                 the ``img_scale``.
-
         Returns:
-            (tuple, None): Returns a tuple ``(scale, None)``, where
-                ``scale`` is sampled ratio multiplied with ``img_scale`` and
-                None is just a placeholder to be consistent with
+            (tuple, None): Returns a tuple ``(scale, None)``, where \
+                ``scale`` is sampled ratio multiplied with ``img_scale`` and \
+                None is just a placeholder to be consistent with \
                 :func:`random_select`.
         """
 
@@ -151,18 +158,15 @@ class Resize(object):
     def _random_scale(self, results):
         """Randomly sample an img_scale according to ``ratio_range`` and
         ``multiscale_mode``.
-
         If ``ratio_range`` is specified, a ratio will be sampled and be
         multiplied with ``img_scale``.
         If multiple scales are specified by ``img_scale``, a scale will be
         sampled according to ``multiscale_mode``.
         Otherwise, single scale will be used.
-
         Args:
             results (dict): Result dict from :obj:`dataset`.
-
         Returns:
-            dict: Two new keys 'scale` and 'scale_idx` are added into
+            dict: Two new keys 'scale` and 'scale_idx` are added into \
                 ``results``, which would be used by subsequent pipelines.
         """
 
@@ -186,7 +190,10 @@ class Resize(object):
         for key in results.get('img_fields', ['img']):
             if self.keep_ratio:
                 img, scale_factor = mmcv.imrescale(
-                    results[key], results['scale'], return_scale=True)
+                    results[key],
+                    results['scale'],
+                    return_scale=True,
+                    backend=self.backend)
                 # the w_scale and h_scale has minor difference
                 # a real fix should be done in the mmcv.imrescale in the future
                 new_h, new_w = img.shape[:2]
@@ -195,7 +202,10 @@ class Resize(object):
                 h_scale = new_h / h
             else:
                 img, w_scale, h_scale = mmcv.imresize(
-                    results[key], results['scale'], return_scale=True)
+                    results[key],
+                    results['scale'],
+                    return_scale=True,
+                    backend=self.backend)
             results[key] = img
 
             scale_factor = np.array([w_scale, h_scale, w_scale, h_scale],
@@ -208,11 +218,12 @@ class Resize(object):
 
     def _resize_bboxes(self, results):
         """Resize bounding boxes with ``results['scale_factor']``."""
-        img_shape = results['img_shape']
         for key in results.get('bbox_fields', []):
             bboxes = results[key] * results['scale_factor']
-            bboxes[:, 0::2] = np.clip(bboxes[:, 0::2], 0, img_shape[1])
-            bboxes[:, 1::2] = np.clip(bboxes[:, 1::2], 0, img_shape[0])
+            if self.bbox_clip_border:
+                img_shape = results['img_shape']
+                bboxes[:, 0::2] = np.clip(bboxes[:, 0::2], 0, img_shape[1])
+                bboxes[:, 1::2] = np.clip(bboxes[:, 1::2], 0, img_shape[0])
             results[key] = bboxes
 
     def _resize_masks(self, results):
@@ -230,21 +241,25 @@ class Resize(object):
         for key in results.get('seg_fields', []):
             if self.keep_ratio:
                 gt_seg = mmcv.imrescale(
-                    results[key], results['scale'], interpolation='nearest')
+                    results[key],
+                    results['scale'],
+                    interpolation='nearest',
+                    backend=self.backend)
             else:
                 gt_seg = mmcv.imresize(
-                    results[key], results['scale'], interpolation='nearest')
+                    results[key],
+                    results['scale'],
+                    interpolation='nearest',
+                    backend=self.backend)
             results['gt_semantic_seg'] = gt_seg
 
     def __call__(self, results):
         """Call function to resize images, bounding boxes, masks, semantic
         segmentation map.
-
         Args:
             results (dict): Result dict from loading pipeline.
-
         Returns:
-            dict: Resized results, 'img_shape', 'pad_shape', 'scale_factor',
+            dict: Resized results, 'img_shape', 'pad_shape', 'scale_factor', \
                 'keep_ratio' keys are added into result dict.
         """
 
@@ -258,8 +273,14 @@ class Resize(object):
             else:
                 self._random_scale(results)
         else:
-            assert 'scale_factor' not in results, (
-                "scale and scale_factor cannot be both set.")
+            if not self.override:
+                assert 'scale_factor' not in results, (
+                    'scale and scale_factor cannot be both set.')
+            else:
+                results.pop('scale')
+                if 'scale_factor' in results:
+                    results.pop('scale_factor')
+                self._random_scale(results)
 
         self._resize_img(results)
         self._resize_bboxes(results)
@@ -272,7 +293,8 @@ class Resize(object):
         repr_str += f'(img_scale={self.img_scale}, '
         repr_str += f'multiscale_mode={self.multiscale_mode}, '
         repr_str += f'ratio_range={self.ratio_range}, '
-        repr_str += f'keep_ratio={self.keep_ratio})'
+        repr_str += f'keep_ratio={self.keep_ratio}, '
+        repr_str += f'bbox_clip_border={self.bbox_clip_border})'
         return repr_str
 
 
@@ -480,23 +502,54 @@ class Normalize(object):
 @PIPELINES.register_module()
 class RandomCrop(object):
     """Random crop the image & bboxes & masks.
-
+    The absolute `crop_size` is sampled based on `crop_type` and `image_size`,
+    then the cropped results are generated.
     Args:
-        crop_size (tuple): Expected size after cropping, (h, w).
-
-    Notes:
-        - If the image is smaller than the crop size, return the original image
+        crop_size (tuple): The relative ratio or absolute pixels of
+            height and width.
+        crop_type (str, optional): one of "relative_range", "relative",
+            "absolute", "absolute_range". "relative" randomly crops
+            (h * crop_size[0], w * crop_size[1]) part from an input of size
+            (h, w). "relative_range" uniformly samples relative crop size from
+            range [crop_size[0], 1] and [crop_size[1], 1] for height and width
+            respectively. "absolute" crops from an input with absolute size
+            (crop_size[0], crop_size[1]). "absolute_range" uniformly samples
+            crop_h in range [crop_size[0], min(h, crop_size[1])] and crop_w
+            in range [crop_size[0], min(w, crop_size[1])]. Default "absolute".
+        allow_negative_crop (bool, optional): Whether to allow a crop that does
+            not contain any bbox area. Default False.
+        bbox_clip_border (bool, optional): Whether clip the objects outside
+            the border of the image. Defaults to True.
+    Note:
+        - If the image is smaller than the absolute crop size, return the
+            original image.
         - The keys for bboxes, labels and masks must be aligned. That is,
           `gt_bboxes` corresponds to `gt_labels` and `gt_masks`, and
           `gt_bboxes_ignore` corresponds to `gt_labels_ignore` and
           `gt_masks_ignore`.
-        - If there are gt bboxes in an image and the cropping area does not
-          have intersection with any gt bbox, this image is skipped.
+        - If the crop does not contain any gt-bbox region and
+          `allow_negative_crop` is set to False, skip this image.
     """
 
-    def __init__(self, crop_size):
-        assert crop_size[0] > 0 and crop_size[1] > 0
+    def __init__(self,
+                 crop_size,
+                 crop_type='absolute',
+                 allow_negative_crop=False,
+                 bbox_clip_border=True):
+        if crop_type not in [
+                'relative_range', 'relative', 'absolute', 'absolute_range'
+        ]:
+            raise ValueError(f'Invalid crop_type {crop_type}.')
+        if crop_type in ['absolute', 'absolute_range']:
+            assert crop_size[0] > 0 and crop_size[1] > 0
+            assert isinstance(crop_size[0], int) and isinstance(
+                crop_size[1], int)
+        else:
+            assert 0 < crop_size[0] <= 1 and 0 < crop_size[1] <= 1
         self.crop_size = crop_size
+        self.crop_type = crop_type
+        self.allow_negative_crop = allow_negative_crop
+        self.bbox_clip_border = bbox_clip_border
         # The key correspondence from bboxes to labels and masks.
         self.bbox2label = {
             'gt_bboxes': 'gt_labels',
@@ -507,26 +560,27 @@ class RandomCrop(object):
             'gt_bboxes_ignore': 'gt_masks_ignore'
         }
 
-    def __call__(self, results):
-        """Call function to randomly crop images, bounding boxes, masks,
-        semantic segmentation maps.
-
+    def _crop_data(self, results, crop_size, allow_negative_crop):
+        """Function to randomly crop images, bounding boxes, masks, semantic
+        segmentation maps.
         Args:
             results (dict): Result dict from loading pipeline.
-
+            crop_size (tuple): Expected absolute size after cropping, (h, w).
+            allow_negative_crop (bool): Whether to allow a crop that does not
+                contain any bbox area. Default to False.
         Returns:
             dict: Randomly cropped results, 'img_shape' key in result dict is
                 updated according to crop size.
         """
-
+        assert crop_size[0] > 0 and crop_size[1] > 0
         for key in results.get('img_fields', ['img']):
             img = results[key]
-            margin_h = max(img.shape[0] - self.crop_size[0], 0)
-            margin_w = max(img.shape[1] - self.crop_size[1], 0)
+            margin_h = max(img.shape[0] - crop_size[0], 0)
+            margin_w = max(img.shape[1] - crop_size[1], 0)
             offset_h = np.random.randint(0, margin_h + 1)
             offset_w = np.random.randint(0, margin_w + 1)
-            crop_y1, crop_y2 = offset_h, offset_h + self.crop_size[0]
-            crop_x1, crop_x2 = offset_w, offset_w + self.crop_size[1]
+            crop_y1, crop_y2 = offset_h, offset_h + crop_size[0]
+            crop_x1, crop_x2 = offset_w, offset_w + crop_size[1]
 
             # crop the image
             img = img[crop_y1:crop_y2, crop_x1:crop_x2, ...]
@@ -534,21 +588,22 @@ class RandomCrop(object):
             results[key] = img
         results['img_shape'] = img_shape
 
-        valid_flag = False
         # crop bboxes accordingly and clip to the image boundary
         for key in results.get('bbox_fields', []):
             # e.g. gt_bboxes and gt_bboxes_ignore
             bbox_offset = np.array([offset_w, offset_h, offset_w, offset_h],
                                    dtype=np.float32)
             bboxes = results[key] - bbox_offset
-            bboxes[:, 0::2] = np.clip(bboxes[:, 0::2], 0, img_shape[1])
-            bboxes[:, 1::2] = np.clip(bboxes[:, 1::2], 0, img_shape[0])
+            if self.bbox_clip_border:
+                bboxes[:, 0::2] = np.clip(bboxes[:, 0::2], 0, img_shape[1])
+                bboxes[:, 1::2] = np.clip(bboxes[:, 1::2], 0, img_shape[0])
             valid_inds = (bboxes[:, 2] > bboxes[:, 0]) & (
                 bboxes[:, 3] > bboxes[:, 1])
-            # When there is no gt bbox, cropping is conducted.
-            # When the crop is valid, cropping is conducted.
-            if len(valid_inds) == 0 or valid_inds.any():
-                valid_flag = True
+            # If the crop does not contain any gt-bbox area and
+            # allow_negative_crop is False, skip this image.
+            if (key == 'gt_bboxes' and not valid_inds.any()
+                    and not allow_negative_crop):
+                return None
             results[key] = bboxes[valid_inds, :]
             # label fields. e.g. gt_labels and gt_labels_ignore
             label_key = self.bbox2label.get(key)
@@ -562,19 +617,65 @@ class RandomCrop(object):
                     valid_inds.nonzero()[0]].crop(
                         np.asarray([crop_x1, crop_y1, crop_x2, crop_y2]))
 
-        # if no gt bbox remains after cropping, just skip this image
-        # TODO: check whether we can keep the image regardless of the crop.
-        if 'bbox_fields' in results and not valid_flag:
-            return None
-
         # crop semantic seg
         for key in results.get('seg_fields', []):
             results[key] = results[key][crop_y1:crop_y2, crop_x1:crop_x2]
 
+        # DOTASpecialIgnore
+        for k in results.get('aligned_fields', []):
+            results[k] = results[k][valid_inds]
+
+        return results
+
+    def _get_crop_size(self, image_size):
+        """Randomly generates the absolute crop size based on `crop_type` and
+        `image_size`.
+        Args:
+            image_size (tuple): (h, w).
+        Returns:
+            crop_size (tuple): (crop_h, crop_w) in absolute pixels.
+        """
+        h, w = image_size
+        if self.crop_type == 'absolute':
+            return (min(self.crop_size[0], h), min(self.crop_size[1], w))
+        elif self.crop_type == 'absolute_range':
+            assert self.crop_size[0] <= self.crop_size[1]
+            crop_h = np.random.randint(
+                min(h, self.crop_size[0]),
+                min(h, self.crop_size[1]) + 1)
+            crop_w = np.random.randint(
+                min(w, self.crop_size[0]),
+                min(w, self.crop_size[1]) + 1)
+            return crop_h, crop_w
+        elif self.crop_type == 'relative':
+            crop_h, crop_w = self.crop_size
+            return int(h * crop_h + 0.5), int(w * crop_w + 0.5)
+        elif self.crop_type == 'relative_range':
+            crop_size = np.asarray(self.crop_size, dtype=np.float32)
+            crop_h, crop_w = crop_size + np.random.rand(2) * (1 - crop_size)
+            return int(h * crop_h + 0.5), int(w * crop_w + 0.5)
+
+    def __call__(self, results):
+        """Call function to randomly crop images, bounding boxes, masks,
+        semantic segmentation maps.
+        Args:
+            results (dict): Result dict from loading pipeline.
+        Returns:
+            dict: Randomly cropped results, 'img_shape' key in result dict is
+                updated according to crop size.
+        """
+        image_size = results['img'].shape[:2]
+        crop_size = self._get_crop_size(image_size)
+        results = self._crop_data(results, crop_size, self.allow_negative_crop)
         return results
 
     def __repr__(self):
-        return self.__class__.__name__ + f'(crop_size={self.crop_size})'
+        repr_str = self.__class__.__name__
+        repr_str += f'(crop_size={self.crop_size}, '
+        repr_str += f'crop_type={self.crop_type}, '
+        repr_str += f'allow_negative_crop={self.allow_negative_crop}, '
+        repr_str += f'bbox_clip_border={self.bbox_clip_border})'
+        return repr_str
 
 
 @PIPELINES.register_module()
