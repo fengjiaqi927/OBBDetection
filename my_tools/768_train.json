@@ -26,6 +26,6 @@
         104, 116, 124
     ],
     "filter_empty": true,
-    "save_dir": "/home/wucx/dataset/tzb/input_path_obb/train/",
+    "save_dir": "/home/wucx/dataset/tzb/input_path_obb/train_768/",
     "save_ext": ".png"
 }
