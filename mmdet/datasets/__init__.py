@@ -11,6 +11,8 @@ from .voc import VOCDataset
 from .wider_face import WIDERFaceDataset
 from .xml_style import XMLDataset
 
+
+from .obb.isprs import ISPRSDataset
 from .obb.dota import DOTADataset
 from .obb.dior import DIORDataset
 from .obb.hrsc import HRSCDataset
