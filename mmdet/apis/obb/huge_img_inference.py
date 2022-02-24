@@ -141,8 +141,8 @@ def inference_detector_huge_image(model, img, split_cfg, merge_cfg):
             results.append(model(return_loss=False, rescale=True, **data))
         prog_bar.update()
     # merge results
-    print()
-    print('Merge patch results!!')
+    # print()
+    # print('Merge patch results!!')
     results = merge_patch_results(results, windows, merge_cfg)
     return results
 

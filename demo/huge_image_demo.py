@@ -21,7 +21,7 @@ def main():
     model = init_detector(args.config, args.checkpoint, device=args.device)
     # test a single image
     nms_cfg = dict(type='BT_nms', iou_thr=0.5)
-    result = inference_detector_huge_image(
+    result,_,_ = inference_detector_huge_image(
         model, args.img, args.split, nms_cfg)
     # show the results
     show_result_pyplot(model, args.img, result, score_thr=args.score_thr)

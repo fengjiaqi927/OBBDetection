@@ -10,6 +10,7 @@ from mmdet.core import get_classes
 from mmdet.datasets.pipelines import Compose
 from mmdet.models import build_detector
 from mmdet.ops import RoIAlign, RoIPool
+import cv2
 
 
 def init_detector(config, checkpoint=None, device='cuda:0'):
@@ -160,3 +161,4 @@ def show_result_pyplot(model, img, result, score_thr=0.3, fig_size=(15, 10)):
     plt.figure(figsize=fig_size)
     plt.imshow(mmcv.bgr2rgb(img))
     plt.show()
+    # cv2.imwrite("/home/fengjq/workspace/OBBDetection/demo/111.png",img)
