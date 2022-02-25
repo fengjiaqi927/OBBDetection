@@ -91,8 +91,8 @@ data = dict(
         ]),
     test=dict(
         type='ISPRSDataset',
-        ann_file='/home/fengjq/workspace/test_for_code/data/split_ss_isprs/train/annfiles/',
-        img_prefix='/home/fengjq/workspace/test_for_code/data/split_ss_isprs/train/images/',
+        ann_file='/home/fengjq/workspace/xtb_dataset/split_isprs_train/annfiles/',
+        img_prefix='/home/fengjq/workspace/xtb_dataset/test/images/',
         pipeline=[
             dict(type='LoadImageFromFile'),
             dict(
