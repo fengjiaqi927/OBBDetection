@@ -1,11 +1,13 @@
 import time
 import os
-
+import numpy as np
 import logging
 import datetime
+import mmcv
 from multiprocessing import Pool, Manager
 from functools import partial, reduce
 import torch
+import BboxToolkit as bt
 
 from argparse import ArgumentParser
 from xml.dom.minidom import Document
@@ -13,7 +15,9 @@ from xml.dom.minidom import Document
 from mmdet.apis import init_detector, show_result_pyplot
 from mmdet.apis import inference_detector_huge_image
 
-def result2xml(img_name, height, width):
+
+
+def result2xml(img_name, height, width,labels,bboxes,output_dir):
     doc = Document()
     root = doc.createElement('annotation')
     doc.appendChild(root)
@@ -44,7 +48,7 @@ def result2xml(img_name, height, width):
     root.appendChild(node_size)
 
     node_objects = doc.createElement('objects')
-    for i in range(len(in_dicts['labels'])):
+    for i in range(len(labels)):
         node_object = doc.createElement('object')
         object_fore_list = {'coordinate': 'pixel', 'type': 'rectangle', 'description': 'None'}
         for object_fore in object_fore_list:
@@ -54,18 +58,18 @@ def result2xml(img_name, height, width):
 
         node_possible_result = doc.createElement('possibleresult')
         node_name = doc.createElement('name')
-        node_name.appendChild(doc.createTextNode(in_dicts['labels'][i]['category_id']))
+        node_name.appendChild(doc.createTextNode(labels[i]))
         node_possible_result.appendChild(node_name)
         node_object.appendChild(node_possible_result)
 
         node_points = doc.createElement('points')
         for j in range(4):
             node_point = doc.createElement('point')
-            text = '{},{}'.format(in_dicts['labels'][i]['points'][j][0], in_dicts['labels'][i]['points'][j][1])
+            text = '{:.6f},{:.6f}'.format(bboxes[i][j*2], bboxes[i][j*2+1])
             node_point.appendChild(doc.createTextNode(text))
             node_points.appendChild(node_point)
         node_point = doc.createElement('point')
-        text = '{},{}'.format(in_dicts['labels'][i]['points'][0][0], in_dicts['labels'][i]['points'][0][1])
+        text = '{:.6f},{:.6f}'.format(bboxes[i][0], bboxes[i][1])
         node_point.appendChild(doc.createTextNode(text))
         node_points.appendChild(node_point)
         node_object.appendChild(node_points)
@@ -74,7 +78,7 @@ def result2xml(img_name, height, width):
     root.appendChild(node_objects)
 
     # 开始写xml文档
-    filename = out_path + in_dicts['image_name'].split('.')[0] + '.xml'
+    filename = output_dir + os.path.splitext(img_name)[0] + '.xml'
     fp = open(filename, 'w', encoding='utf-8')
     doc.writexml(fp, indent='', addindent='\t', newl='\n', encoding="utf-8")
     fp.close()
@@ -84,18 +88,34 @@ def result2xml(img_name, height, width):
 # 尝试写多进程代码实现inference
 
 # 单张大图的测试代码
-def single_huge_img_inference(arguments,model,save_files,split,lock,prog,total):
-    # print(arguments)
+def single_huge_img_inference(arguments,model,score_thr,output_dir,save_files,split,lock,prog,total):
+   
     img = arguments
-    # build the model from a config file and a checkpoint file
-    
+   
     # test a single image
     nms_cfg = dict(type='BT_nms', iou_thr=0.5)
-    result,height, width = inference_detector_huge_image(
+    result = inference_detector_huge_image(
         model, img, split, nms_cfg)
-    image_name = os.path.split(img)[1]
     
-    result2xml(image_name,height, width)
+    # result -> labels_name and polys
+    bboxes = np.vstack(result)
+    labels = [
+        np.full(bbox.shape[0], i, dtype=np.int32)
+        for i, bbox in enumerate(result)
+    ]
+    labels = np.concatenate(labels)
+    bboxes, scores = bboxes[:, :-1], bboxes[:, -1]
+    bboxes = bboxes[scores > score_thr]
+    labels = labels[scores > score_thr]
+    # scores = scores[scores > score_thr]
+    labels_name = [model.CLASSES[label] for label in labels]
+
+
+    image_name = os.path.split(img)[1]
+    height, width = mmcv.imread(img).shape[:2]
+
+
+    result2xml(image_name, str(height), str(width), labels_name, bt.obb2poly(bboxes),output_dir)
     
     
     # 写日志文件
@@ -103,9 +123,11 @@ def single_huge_img_inference(arguments,model,save_files,split,lock,prog,total):
     prog.value += 1
     msg = f'({prog.value/total:3.1%} {prog.value}:{total})'
     msg += ' - ' + f"Filename: {image_name}"
-    msg += ' - ' + f"Objects: {len(result):<5d}"
+    msg += ' - ' + f"width: {width:<5d}"
+    msg += ' - ' + f"height: {height:<5d}"
+    msg += ' - ' + f"Objects: {len(labels):<5d}"
   
-    print(msg)
+    # print(msg)
     with open(save_files,"a") as f:
         f.write(msg) 
         f.write('\n')
@@ -145,9 +167,11 @@ def main():
     checkpoint_dir = "/home/fengjq/workspace/OBBDetection/fjq_code/epoch_12.pth"
     device = "cuda:3"
     split_json = "/home/fengjq/workspace/xtb_dataset/split_isprs_train/annfiles/split_config.json"
+    output_dir = "/home/fengjq/workspace/xtb_dataset/test/inference_result/"
+    score_thr = 0.3
     img_list = [img_dir+img_name for img_name in os.listdir(img_dir)]
     
-    nproc = 1
+    nproc = 4
     
     # 调用多进程
     
@@ -159,6 +183,8 @@ def main():
     model = init_detector(config_dir, checkpoint_dir, device=device)
     worker = partial(single_huge_img_inference,
                      model = model,
+                     score_thr=score_thr,
+                     output_dir=output_dir,
                      save_files=save_files,
                      split=split_json,
                      lock=manager.Lock(),
