@@ -105,7 +105,7 @@ def result2xml(img_name, height, width,labels,bboxes,output_dir):
 # 尝试写多进程代码实现inference
 
 # 单张大图的测试代码
-def single_huge_img_inference(arguments,model,score_thr,output_dir,save_files,split,lock,prog,total):
+def single_huge_img_inference(arguments,model,score_thr,output_xml_dir,output_img_dir,save_files,split,lock,prog,total):
    
     img = arguments
    
@@ -132,10 +132,18 @@ def single_huge_img_inference(arguments,model,score_thr,output_dir,save_files,sp
     image_name = os.path.split(img)[1]
     height, width = mmcv.imread(img).shape[:2]
 
-    assert draw_labels_in_img(img,output_dir+os.path.splitext(image_name)[0]+'_inference.png',bboxes,scores,labels_name)
+    keep = bt.bbox_nms(bboxes,scores,iou_thr=0.5, score_thr=0.01)
+
+    # bboxes = np.array([bboxes[i] for i in keep])
+    bboxes = bboxes[keep]
+    scores = scores[keep]
+    labels_name = [labels_name[i] for i in keep]
+    
+
+    assert draw_labels_in_img(img,output_img_dir+os.path.splitext(image_name)[0]+'_inference.png',bboxes,scores,labels_name)
 
 
-    assert result2xml(image_name, str(height), str(width), labels_name, bboxes,output_dir)
+    assert result2xml(image_name, str(height), str(width), labels_name, bboxes,output_xml_dir)
 
 
     # 写日志文件
@@ -163,16 +171,17 @@ def main():
     torch.multiprocessing.set_start_method('spawn')
     img_dir = "/home/fengjq/workspace/test_for_code/data/split_ss_isprs/train/images/"
     img_dir = "/home/fengjq/workspace/xtb_dataset/test/images/"
-    save_files = "/home/fengjq/workspace/test_for_code/data/split_ss_isprs/test_result/temp.txt"
+    save_files = "/home/fengjq/workspace/xtb_dataset/test/temp.txt"
     config_dir = "/home/fengjq/workspace/OBBDetection/fjq_code/faster_rcnn_obb_r50_fpn_1x_dota10_for_test.py"
     checkpoint_dir = "/home/fengjq/workspace/OBBDetection/fjq_code/epoch_12.pth"
     device = "cuda:3"
     split_json = "/home/fengjq/workspace/xtb_dataset/split_isprs_train/annfiles/split_config.json"
-    output_dir = "/home/fengjq/workspace/xtb_dataset/test/inference_result_vis/"
+    output_img_dir = "/home/fengjq/workspace/xtb_dataset/test/inference_result_vis/"
+    output_xml_dir = "/home/fengjq/workspace/xtb_dataset/test/inference_result/"
     score_thr = 0.3
     img_list = [img_dir+img_name for img_name in os.listdir(img_dir)]
     
-    nproc = 1
+    nproc = 6
     
     # 调用多进程
     
@@ -185,7 +194,8 @@ def main():
     worker = partial(single_huge_img_inference,
                      model = model,
                      score_thr=score_thr,
-                     output_dir=output_dir,
+                     output_xml_dir=output_xml_dir,
+                     output_img_dir=output_img_dir,
                      save_files=save_files,
                      split=split_json,
                      lock=manager.Lock(),
